@@ -1,6 +1,6 @@
 # FinOps: Databricks FOCUS Cost & Usage for Qlik Cloud
 
-A Qlik Cloud Analytics app that monitors Databricks consumption and spend across every workspace in a Databricks account, using billing data mapped to the [FOCUS™](https://focus.finops.org/docs/specification/v1-4/) (FinOps Open Cost & Usage Specification) v1.4 format. It is the Databricks counterpart of the Snowflake FOCUS Cost & Usage app: same sheets, master measures and conventions, so the two can be compared side by side. Paired with Qlik's Discovery Agent, it detects cost anomalies after each reload.
+A Qlik Cloud Analytics app that monitors Databricks consumption and spend across every workspace in a Databricks account, using billing data mapped to the [FOCUS™](https://focus.finops.org/docs/specification/v1-4/) (FinOps Open Cost & Usage Specification) v1.4 format. Paired with Qlik's Discovery Agent, it detects cost anomalies after each reload.
 
 ## What is here
 
@@ -21,7 +21,7 @@ The load script runs that query with three changes:
 
 1. The CTEs are wrapped in a subquery, because the Qlik ODBC connector only accepts statements that start with `SELECT`.
 2. `:account_prices` is set to `system.billing.list_prices`, and usage is filtered from 2026-01-01.
-3. Usage windows are aggregated to one row per day, workspace, service, SKU and unit, the same daily grain as the Snowflake app.
+3. Usage windows are aggregated to one row per day, workspace, service, SKU and unit.
 
 ## What the app covers
 
