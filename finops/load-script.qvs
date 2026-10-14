@@ -1,0 +1,661 @@
+///$tab Main
+/*
+================================================================================
+ App      : Databricks FOCUS Cost & Usage (v1.3)
+ Purpose  : FinOps analysis of Databricks billing data in FOCUS format
+            (FinOps Open Cost and Usage Specification).
+ Source   : Unity Catalog system tables, mapped to FOCUS 1.3 by the query
+            published by Databricks:
+            https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus
+            Tables: system.billing.usage, system.billing.list_prices,
+            system.access.workspaces_latest, system.compute.clusters,
+            system.compute.warehouses, system.lakeflow.pipelines
+ License  : The SQL in the FOCUS Cost & Usage tab is a MODIFIED copy of
+            focus_query_1_3.sql, Copyright (2025) Databricks, Inc., used under the
+            Databricks License (finops/LICENSE-databricks.md, NOTICE-databricks.md).
+            Changes: wrapped in a SELECT subquery, comments removed,
+            :account_prices set to system.billing.list_prices, usage_date filter,
+            aggregation to daily grain.
+ Spec     : https://focus.finops.org/
+ Access   : SELECT on the six system tables above (USE CATALOG system,
+            USE SCHEMA on billing, access, compute and lakeflow), granted to a
+            dedicated service principal used only by the Qlik connection, plus
+            a SQL warehouse to run the query.
+ Freshness: system.billing.usage is typically updated within a few hours.
+            History loaded from 2026-01-01 (see the WHERE clause).
+ Tabs     : Main                - locale settings and connection
+            Calendar Logic      - reload-date anchor for relative periods
+            FOCUS Cost & Usage  - fact table extract
+            Period Selector     - island table driving master-measure periods
+            About               - text shown on the About sheet
+================================================================================
+*/
+
+SET ThousandSep=',';
+SET DecimalSep='.';
+SET MoneyThousandSep=',';
+SET MoneyDecimalSep='.';
+SET MoneyFormat='$#,##0.00;-$#,##0.00';
+SET TimeFormat='hh:mm:ss';
+SET DateFormat='YYYY-MM-DD';
+SET TimestampFormat='YYYY-MM-DD hh:mm:ss[.fff]';
+SET FirstWeekDay=0;        // Monday
+SET FirstMonthOfYear=1;    // Calendar year
+
+// Databricks data connection, as '<SpaceName>:<ConnectionName>' (just the name for a personal-space connection).
+// Change this line to match the connection you created (see finops/README.md).
+// Tip: in the Data connections panel, click the connection's Connect icon to insert the exact string.
+LIB CONNECT TO 'Databricks_adb-1918470936722426.6.azuredatabricks.net';
+
+///$tab Calendar Logic
+/*
+ Relative-period anchor.
+ Note   : the anchor is the reload date (Today(1) = date at reload time), so
+          "Today" means the day of the last reload. Reload daily to keep it current.
+          The DayRelNo, WeeksAgo, MonthsAgo and YearsAgo fields are derived in the
+          FOCUS Cost & Usage tab relative to this anchor.
+*/
+LET vToday = Num(Today(1));
+
+///$tab FOCUS Cost & Usage
+/*
+ Fact table: one row per day, workspace (sub-account), service, SKU and unit.
+
+ Origin of each layer (read bottom to top):
+   1. SQL SELECT   - the Databricks FOCUS 1.3 mapping query (CTEs unchanged, wrapped
+                     in a subquery because the Qlik ODBC connector only accepts
+                     statements that start with SELECT; with
+                     :account_prices set to system.billing.list_prices and a
+                     usage_date filter), then aggregated from usage windows to
+                     daily grain so the app matches the Snowflake FOCUS app.
+                     If you are in the Account Prices Preview (AWS/GCP), replace
+                     the second system.billing.list_prices (account_prices CTE)
+                     with system.billing.account_prices.
+   2. Inner LOAD   - calendar attributes derived from ChargePeriodStart and
+                     BillingPeriodStart (calendar month).
+   3. Outer LOAD   - relative-period fields used by the Period Selector:
+                       DayRelNo  0 = reload day, 1 = previous day
+                       WeeksAgo  0 = current week, 1 = previous week
+                       MonthsAgo 0 = current month, 1 = previous month
+                       YearsAgo  0 = current year, 1 = previous year
+
+ Cost columns (as mapped by the Databricks query):
+   ListCost       = usage_quantity x list unit price
+   ContractedCost = usage_quantity x account unit price
+   BilledCost     = same as ContractedCost
+   EffectiveCost  = same as BilledCost (no commitment data in system tables)
+*/
+FOCUS_Cost_Usage:
+LOAD
+    *,
+    $(vToday) - Num(ChargeDate)                                                  AS DayRelNo,
+    (Num(WeekStart($(vToday))) - Num(WeekStart(ChargeDate))) / 7                 AS WeeksAgo,
+    (Year($(vToday)) * 12 + Month($(vToday))) - (ChargeYear * 12 + ChargeMonth)  AS MonthsAgo,
+    Year($(vToday)) - ChargeYear                                                 AS YearsAgo;
+LOAD
+    Date(Floor(ChargePeriodStart))                   AS ChargeDate,
+    Year(ChargePeriodStart)                          AS ChargeYear,
+    Month(ChargePeriodStart)                         AS ChargeMonth,
+    Date(MonthStart(ChargePeriodStart), 'YYYY-MMM')  AS ChargeYearMonth,
+    Date(Floor(BillingPeriodStart), 'YYYY-MMM')      AS BillingPeriod,
+    *;
+SQL
+    SELECT
+      CAST(DATE_TRUNC('DAY', ChargePeriodStart) AS TIMESTAMP) AS ChargePeriodStart,
+      CAST(DATE_TRUNC('DAY', ChargePeriodStart) + INTERVAL 1 DAY AS TIMESTAMP) AS ChargePeriodEnd,
+      CAST(BillingPeriodStart AS TIMESTAMP) AS BillingPeriodStart,
+      CAST(BillingPeriodEnd AS TIMESTAMP) AS BillingPeriodEnd,
+      BillingAccountId, BillingAccountName,
+      SubAccountId, SubAccountName, SubAccountType,
+      ChargeCategory, ChargeClass, ChargeFrequency,
+      ServiceCategory, ServiceSubcategory, ServiceName, ChargeDescription,
+      ResourceType, SkuMeter,
+      ConsumedUnit, PricingUnit,
+      BillingCurrency, PricingCategory,
+      RegionId, RegionName, HostProviderName, InvoiceIssuerName, ServiceProviderName,
+      CAST(SUM(ConsumedQuantity) AS DOUBLE) AS ConsumedQuantity,
+      CAST(SUM(PricingQuantity) AS DOUBLE) AS PricingQuantity,
+      CAST(MAX(ListUnitPrice) AS DOUBLE) AS ListUnitPrice,
+      CAST(MAX(ContractedUnitPrice) AS DOUBLE) AS ContractedUnitPrice,
+      CAST(SUM(ListCost) AS DOUBLE) AS ListCost,
+      CAST(SUM(ContractedCost) AS DOUBLE) AS ContractedCost,
+      CAST(SUM(EffectiveCost) AS DOUBLE) AS EffectiveCost,
+      CAST(SUM(BilledCost) AS DOUBLE) AS BilledCost
+    FROM (
+    WITH pipeline_names AS (
+      SELECT account_id, workspace_id, pipeline_id, name AS pipeline_name
+      FROM system.lakeflow.pipelines
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY account_id, workspace_id, pipeline_id ORDER BY create_time DESC
+      ) = 1
+    ),
+    cluster_names AS (
+      SELECT account_id, workspace_id, cluster_id, cluster_name
+      FROM system.compute.clusters
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY account_id, workspace_id, cluster_id ORDER BY change_time DESC
+      ) = 1
+    ),
+    warehouse_names AS (
+      SELECT account_id, workspace_id, warehouse_id, warehouse_name
+      FROM system.compute.warehouses
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY account_id, workspace_id, warehouse_id ORDER BY change_time DESC
+      ) = 1
+    ),
+    list_prices as (
+      select coalesce(price_end_time, date_add(current_date, 1)) as coalesced_price_end_time, *
+      from system.billing.list_prices
+      where currency_code = 'USD'
+    ),
+    account_prices as (
+      select coalesce(price_end_time, date_add(current_date, 1)) as coalesced_price_end_time, *
+      from system.billing.list_prices
+      where currency_code = 'USD'
+    ),
+    usage_with_pricing AS (
+      SELECT
+        u.record_id,
+        u.account_id,
+        u.workspace_id,
+        w.workspace_name,
+        u.sku_name,
+        u.cloud,
+        u.usage_start_time,
+        u.usage_end_time,
+        u.usage_date,
+        u.usage_quantity,
+        u.usage_unit,
+        u.usage_type,
+        u.custom_tags,
+        u.usage_metadata,
+        u.product_features,
+        u.billing_origin_product,
+        pip.pipeline_name,
+        cl.cluster_name,
+        wh.warehouse_name,
+        lp.currency_code,
+        lp.price_start_time,
+        CAST(lp.pricing.default AS DECIMAL(30, 15)) AS list_unit_price,
+        CAST(ap.pricing.default AS DECIMAL(30, 15)) AS account_unit_price
+      FROM
+        system.billing.usage u
+          LEFT JOIN list_prices lp
+            ON u.sku_name = lp.sku_name
+            AND u.usage_unit = lp.usage_unit
+            AND u.account_id = lp.account_id
+            AND u.usage_end_time between lp.price_start_time and lp.coalesced_price_end_time
+          LEFT JOIN account_prices ap
+            ON u.sku_name = ap.sku_name
+            AND u.usage_unit = ap.usage_unit
+            AND u.account_id = ap.account_id
+            AND u.usage_end_time between ap.price_start_time and ap.coalesced_price_end_time
+          LEFT JOIN system.access.workspaces_latest w
+            ON u.account_id = w.account_id
+            AND u.workspace_id = w.workspace_id
+          LEFT JOIN pipeline_names pip
+            ON u.account_id = pip.account_id
+            AND u.workspace_id = pip.workspace_id
+            AND u.usage_metadata.dlt_pipeline_id = pip.pipeline_id
+          LEFT JOIN cluster_names cl
+            ON u.account_id = cl.account_id
+            AND u.workspace_id = cl.workspace_id
+            AND u.usage_metadata.cluster_id = cl.cluster_id
+          LEFT JOIN warehouse_names wh
+            ON u.account_id = wh.account_id
+            AND u.workspace_id = wh.workspace_id
+            AND u.usage_metadata.warehouse_id = wh.warehouse_id
+      WHERE u.usage_date >= DATE'2026-01-01'
+    ), focus AS (
+    SELECT
+      CAST(NULL AS STRING) AS AllocatedMethodId,
+      CAST(NULL AS STRING) AS AllocatedMethodDetails,
+      CAST(NULL AS STRING) AS AllocatedResourceId,
+      CAST(NULL AS STRING) AS AllocatedResourceName,
+      CAST(NULL AS STRING) AS AllocatedTags,
+      CAST(NULL AS STRING) AS AvailabilityZone,
+      CAST(COALESCE(usage_quantity * account_unit_price, 0) AS DECIMAL(30, 15)) AS BilledCost,
+      u.account_id AS BillingAccountId,
+      u.account_id AS BillingAccountName,
+      CAST(NULL AS STRING) AS BillingAccountType,
+      u.currency_code AS BillingCurrency,
+      DATE_TRUNC('MONTH', u.usage_date)
+      + INTERVAL 1 MONTH AS BillingPeriodEnd,
+      DATE_TRUNC('MONTH', u.usage_date) AS BillingPeriodStart,
+      CAST(NULL AS STRING) AS CapacityReservationId,
+      CAST(NULL AS STRING) AS CapacityReservationStatus,
+      'Usage' AS ChargeCategory,
+      CAST(NULL AS STRING) AS ChargeClass,
+      u.sku_name AS ChargeDescription,
+      'Usage-Based' AS ChargeFrequency,
+      u.usage_end_time AS ChargePeriodEnd,
+      u.usage_start_time AS ChargePeriodStart,
+      CAST(NULL AS STRING) AS CommitmentDiscountCategory,
+      CAST(NULL AS STRING) AS CommitmentDiscountId,
+      CAST(NULL AS STRING) AS CommitmentDiscountName,
+      CAST(NULL AS DECIMAL(30, 15)) AS CommitmentDiscountQuantity,
+      CAST(NULL AS STRING) AS CommitmentDiscountStatus,
+      CAST(NULL AS STRING) AS CommitmentDiscountType,
+      CAST(NULL AS STRING) AS CommitmentDiscountUnit,
+      CAST(u.usage_quantity AS DECIMAL(30, 15)) AS ConsumedQuantity,
+      u.usage_unit AS ConsumedUnit,
+      CAST(NULL AS STRING) AS ContractApplied,
+      CAST(COALESCE(usage_quantity * account_unit_price, 0) AS DECIMAL(30, 15)) AS ContractedCost,
+      CAST(u.account_unit_price AS DECIMAL(30, 15)) AS ContractedUnitPrice,
+      CAST(COALESCE(usage_quantity * account_unit_price, 0) AS DECIMAL(30, 15)) AS EffectiveCost,
+      CASE u.cloud
+        WHEN 'AWS' THEN 'Amazon Web Services'
+        WHEN 'AZURE' THEN 'Microsoft Azure'
+        WHEN 'GCP' THEN 'Google Cloud Platform'
+        ELSE u.cloud
+      END AS HostProviderName,
+      CAST(NULL AS STRING) AS InvoiceId,
+      'Databricks' AS InvoiceIssuerName,
+      CAST(COALESCE(u.usage_quantity * u.list_unit_price, 0) AS DECIMAL(30, 15)) AS ListCost,
+      CAST(u.list_unit_price AS DECIMAL(30, 15)) AS ListUnitPrice,
+      'Standard' AS PricingCategory,
+      u.currency_code AS PricingCurrency,
+      CAST(u.account_unit_price AS DECIMAL(30, 15)) AS PricingCurrencyContractedUnitPrice,
+      CAST(
+        COALESCE(usage_quantity * account_unit_price, 0) AS DECIMAL(30, 15)
+      ) AS PricingCurrencyEffectiveCost,
+      CAST(u.list_unit_price AS DECIMAL(30, 15)) AS PricingCurrencyListUnitPrice,
+      CAST(u.usage_quantity AS DECIMAL(30, 15)) AS PricingQuantity,
+      u.usage_unit AS PricingUnit,
+      'Databricks' AS ProviderName,
+      'Databricks' AS PublisherName,
+      split(current_metastore(), ':')[1] AS RegionId,
+      split(current_metastore(), ':')[1] AS RegionName,
+      CASE
+        WHEN
+          u.billing_origin_product IN ('JOBS')
+        THEN
+          COALESCE(u.usage_metadata.job_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product IN ('LAKEHOUSE_MONITORING')
+        THEN
+          COALESCE(u.custom_tags['LakehouseMonitoringTableId'], u.billing_origin_product)
+        WHEN u.billing_origin_product IN ('PREDICTIVE_OPTIMIZATION') THEN u.billing_origin_product
+        WHEN
+          u.billing_origin_product IN ('DLT', 'ONLINE_TABLES', 'LAKEFLOW_CONNECT')
+        THEN
+          COALESCE(u.usage_metadata.dlt_pipeline_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product IN ('MODEL_SERVING')
+          AND u.sku_name = 'ENTERPRISE_ALL_PURPOSE_COMPUTE'
+        THEN
+          COALESCE(u.usage_metadata.cluster_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product IN ('VECTOR_SEARCH')
+          AND (
+            u.sku_name LIKE 'ENTERPRISE_JOBS_SERVERLESS_COMPUTE%'
+            OR u.sku_name LIKE 'ENTERPRISE_SERVERLESS_SQL_COMPUTE%'
+          )
+        THEN
+          COALESCE(u.usage_metadata.dlt_pipeline_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product IN ('MODEL_SERVING', 'AI_FUNCTIONS', 'VECTOR_SEARCH', 'AI_GATEWAY')
+        THEN
+          COALESCE(u.usage_metadata.endpoint_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product IN ('DATABASE')
+          AND (u.sku_name LIKE 'ENTERPRISE_JOBS_SERVERLESS_COMPUTE%')
+        THEN
+          COALESCE(u.usage_metadata.dlt_pipeline_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'DATABASE'
+        THEN
+          COALESCE(u.usage_metadata.database_instance_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'ALL_PURPOSE'
+        THEN
+          COALESCE(u.usage_metadata.cluster_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'DATA_CLASSIFICATION'
+        THEN
+          COALESCE(u.usage_metadata.catalog_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'FINE_GRAINED_ACCESS_CONTROL'
+        THEN
+          COALESCE(u.custom_tags['Name'], u.billing_origin_product)
+        WHEN
+          u.billing_origin_product IN ('NETWORKING', 'AGENT_EVALUATION', 'SHARED_SERVERLESS_COMPUTE')
+        THEN
+          u.billing_origin_product
+        WHEN
+          u.billing_origin_product = 'FOUNDATION_MODEL_TRAINING'
+        THEN
+          COALESCE(u.usage_metadata.run_name, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'AI_RUNTIME'
+        THEN
+          COALESCE(u.usage_metadata.ai_runtime_workload_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'CLEAN_ROOM'
+        THEN
+          COALESCE(u.usage_metadata.central_clean_room_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'APPS'
+        THEN
+          COALESCE(u.usage_metadata.app_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'SQL'
+          AND (u.sku_name LIKE '%_JOBS_SERVERLESS_COMPUTE%')
+        THEN
+          COALESCE(u.usage_metadata.dlt_pipeline_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'SQL'
+        THEN
+          COALESCE(u.usage_metadata.warehouse_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'AGENT_BRICKS'
+        THEN
+          COALESCE(u.usage_metadata.agent_bricks_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'BASE_ENVIRONMENTS'
+        THEN
+          COALESCE(u.usage_metadata.base_environment_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'DATA_QUALITY_MONITORING'
+        THEN
+          COALESCE(u.usage_metadata.schema_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product = 'DATA_SHARING'
+        THEN
+          COALESCE(u.usage_metadata.sharing_materialization_id, u.billing_origin_product)
+        WHEN
+          u.billing_origin_product IN ('INTERACTIVE', 'NOTEBOOKS')
+        THEN
+          COALESCE(u.usage_metadata.notebook_id, u.billing_origin_product)
+        ELSE u.billing_origin_product
+      END AS ResourceId,
+      CASE
+        WHEN u.billing_origin_product IN ('JOBS')
+          THEN COALESCE(u.usage_metadata.job_name, u.usage_metadata.job_id)
+        WHEN u.billing_origin_product IN ('DLT', 'LAKEFLOW_CONNECT', 'ONLINE_TABLES')
+          THEN COALESCE(u.pipeline_name, u.usage_metadata.dlt_pipeline_id)
+        WHEN u.billing_origin_product = 'ALL_PURPOSE'
+          THEN COALESCE(u.cluster_name, u.usage_metadata.cluster_id)
+        WHEN u.billing_origin_product = 'SQL'
+          THEN COALESCE(u.warehouse_name, u.usage_metadata.warehouse_id)
+        WHEN u.billing_origin_product IN ('MODEL_SERVING', 'AI_GATEWAY', 'AI_FUNCTIONS', 'VECTOR_SEARCH')
+          THEN COALESCE(u.usage_metadata.endpoint_name, u.usage_metadata.endpoint_id)
+        WHEN u.billing_origin_product = 'APPS'
+          THEN COALESCE(u.usage_metadata.app_name, u.usage_metadata.app_id)
+        WHEN u.billing_origin_product IN ('INTERACTIVE', 'NOTEBOOKS')
+          THEN COALESCE(u.usage_metadata.notebook_path, u.usage_metadata.notebook_id)
+        WHEN u.billing_origin_product = 'FOUNDATION_MODEL_TRAINING'
+          THEN u.usage_metadata.run_name
+        WHEN u.billing_origin_product = 'AI_RUNTIME'
+          THEN u.usage_metadata.ai_runtime_workload_id
+        WHEN u.billing_origin_product = 'DATABASE'
+          THEN u.usage_metadata.database_instance_id
+        WHEN u.billing_origin_product = 'AGENT_BRICKS'
+          THEN u.usage_metadata.agent_bricks_id
+        WHEN u.billing_origin_product = 'CLEAN_ROOM'
+          THEN u.usage_metadata.central_clean_room_id
+        WHEN u.billing_origin_product = 'BASE_ENVIRONMENTS'
+          THEN u.usage_metadata.base_environment_id
+        WHEN u.billing_origin_product = 'DATA_SHARING'
+          THEN u.usage_metadata.sharing_materialization_id
+        ELSE u.billing_origin_product
+      END AS ResourceName,
+      CASE
+        WHEN u.billing_origin_product = 'JOBS' THEN 'Job'
+        WHEN u.billing_origin_product = 'DLT' THEN 'Spark Declarative Pipeline'
+        WHEN u.billing_origin_product = 'LAKEFLOW_CONNECT' THEN 'LakeFlow Connect'
+        WHEN u.billing_origin_product = 'ALL_PURPOSE' THEN 'Cluster'
+        WHEN u.billing_origin_product = 'INTERACTIVE' THEN 'Compute'
+        WHEN u.billing_origin_product = 'NOTEBOOKS' THEN 'Notebook'
+        WHEN u.billing_origin_product = 'SQL' THEN 'SQL Warehouse'
+        WHEN u.billing_origin_product = 'MODEL_SERVING' THEN 'Model Serving Endpoint'
+        WHEN u.billing_origin_product = 'VECTOR_SEARCH' THEN 'Vector Search Endpoint'
+        WHEN u.billing_origin_product = 'AI_GATEWAY' THEN 'AI Gateway'
+        WHEN u.billing_origin_product = 'AI_FUNCTIONS' THEN 'AI Function'
+        WHEN u.billing_origin_product = 'FOUNDATION_MODEL_TRAINING' THEN 'Foundation Model Training Run'
+        WHEN u.billing_origin_product = 'AGENT_EVALUATION' THEN 'Agent Evaluation'
+        WHEN u.billing_origin_product = 'AGENT_BRICKS' THEN 'Agent'
+        WHEN u.billing_origin_product = 'AI_RUNTIME' THEN 'AI Runtime Workload'
+        WHEN u.billing_origin_product = 'DATABASE' THEN 'Database Instance'
+        WHEN u.billing_origin_product = 'ONLINE_TABLES' THEN 'Online Table'
+        WHEN u.billing_origin_product = 'DEFAULT_STORAGE' THEN 'Storage'
+        WHEN u.billing_origin_product = 'LAKEHOUSE_MONITORING' THEN 'Lakehouse Monitoring'
+        WHEN u.billing_origin_product = 'DATA_QUALITY_MONITORING' THEN 'Data Quality Monitor'
+        WHEN u.billing_origin_product = 'PREDICTIVE_OPTIMIZATION' THEN 'Predictive Optimization'
+        WHEN u.billing_origin_product = 'CLEAN_ROOM' THEN 'Clean Room'
+        WHEN u.billing_origin_product = 'DATA_CLASSIFICATION' THEN 'Data Classification'
+        WHEN u.billing_origin_product = 'FINE_GRAINED_ACCESS_CONTROL' THEN 'Access Control Policy'
+        WHEN u.billing_origin_product = 'NETWORKING' THEN 'Networking'
+        WHEN u.billing_origin_product = 'SHARED_SERVERLESS_COMPUTE' THEN 'Serverless Compute'
+        WHEN u.billing_origin_product = 'BASE_ENVIRONMENTS' THEN 'Base Environment'
+        WHEN u.billing_origin_product = 'APPS' THEN 'Application'
+        WHEN u.billing_origin_product = 'DATA_SHARING' THEN 'Data Share'
+        ELSE COALESCE(u.billing_origin_product, 'Other')
+      END AS ResourceType,
+      CASE
+        WHEN u.billing_origin_product IN ('ALL_PURPOSE', 'INTERACTIVE', 'NOTEBOOKS', 'SHARED_SERVERLESS_COMPUTE')
+          THEN 'Compute'
+        WHEN u.billing_origin_product IN ('JOBS', 'DLT')
+          THEN 'Analytics'
+        WHEN u.billing_origin_product IN (
+          'MODEL_SERVING',
+          'VECTOR_SEARCH',
+          'FOUNDATION_MODEL_TRAINING',
+          'AGENT_EVALUATION',
+          'AI_GATEWAY',
+          'AI_FUNCTIONS',
+          'AGENT_BRICKS',
+          'AI_RUNTIME'
+        )
+          THEN 'AI and Machine Learning'
+        WHEN u.billing_origin_product IN ('DEFAULT_STORAGE')
+          THEN 'Storage'
+        WHEN u.billing_origin_product IN ('DATABASE', 'ONLINE_TABLES', 'SQL')
+          THEN 'Databases'
+        WHEN u.billing_origin_product IN (
+          'LAKEHOUSE_MONITORING',
+          'DATA_QUALITY_MONITORING',
+          'PREDICTIVE_OPTIMIZATION',
+          'CLEAN_ROOM',
+          'DATA_SHARING'
+        )
+          THEN 'Management and Governance'
+        WHEN u.billing_origin_product IN ('FINE_GRAINED_ACCESS_CONTROL', 'DATA_CLASSIFICATION')
+          THEN 'Security'
+        WHEN u.billing_origin_product IN ('NETWORKING')
+          THEN 'Networking'
+        WHEN u.billing_origin_product IN ('LAKEFLOW_CONNECT')
+          THEN 'Integration'
+        WHEN u.billing_origin_product IN ('BASE_ENVIRONMENTS')
+          THEN 'Developer Tools'
+        WHEN u.billing_origin_product IN ('APPS')
+          THEN 'Web'
+        ELSE 'Other'
+      END AS ServiceCategory,
+      u.billing_origin_product AS ServiceName,
+      'Databricks' AS ServiceProviderName,
+      CASE
+        WHEN u.billing_origin_product = 'ALL_PURPOSE'
+          THEN 'Virtual Machines'
+        WHEN u.billing_origin_product = 'INTERACTIVE'
+          THEN
+            CASE
+              WHEN upper(u.sku_name) LIKE '%SERVERLESS%' THEN 'Serverless Compute'
+              ELSE 'Virtual Machines'
+            END
+        WHEN u.billing_origin_product IN ('NOTEBOOKS', 'SHARED_SERVERLESS_COMPUTE')
+          THEN 'Serverless Compute'
+        WHEN u.billing_origin_product IN ('JOBS', 'DLT')
+          THEN 'Data Processing'
+        WHEN u.billing_origin_product = 'MODEL_SERVING'
+          THEN 'AI Platforms'
+        WHEN u.billing_origin_product IN ('FOUNDATION_MODEL_TRAINING', 'AGENT_BRICKS', 'AI_RUNTIME')
+          THEN 'Generative AI'
+        WHEN u.billing_origin_product IN ('AI_GATEWAY', 'AI_FUNCTIONS')
+          THEN 'AI Platforms'
+        WHEN u.billing_origin_product IN ('VECTOR_SEARCH', 'AGENT_EVALUATION')
+          THEN 'Other (AI and Machine Learning)'
+        WHEN u.billing_origin_product = 'DEFAULT_STORAGE'
+          THEN 'Object Storage'
+        WHEN u.billing_origin_product = 'SQL'
+          THEN 'Data Warehouses'
+        WHEN u.billing_origin_product IN ('DATABASE', 'ONLINE_TABLES')
+          THEN 'Relational Databases'
+        WHEN u.billing_origin_product IN ('LAKEHOUSE_MONITORING', 'DATA_QUALITY_MONITORING')
+          THEN 'Observability'
+        WHEN u.billing_origin_product = 'PREDICTIVE_OPTIMIZATION'
+          THEN 'Cost Management'
+        WHEN u.billing_origin_product IN ('CLEAN_ROOM', 'DATA_SHARING')
+          THEN 'Other (Management and Governance)'
+        WHEN u.billing_origin_product = 'DATA_CLASSIFICATION'
+          THEN 'Security Posture Management'
+        WHEN u.billing_origin_product = 'FINE_GRAINED_ACCESS_CONTROL'
+          THEN 'Other (Security)'
+        WHEN u.billing_origin_product = 'NETWORKING'
+          THEN 'Network Connectivity'
+        WHEN u.billing_origin_product = 'LAKEFLOW_CONNECT'
+          THEN 'Other (Integration)'
+        WHEN u.billing_origin_product = 'BASE_ENVIRONMENTS'
+          THEN 'Development Environments'
+        WHEN u.billing_origin_product = 'APPS'
+          THEN 'Application Platforms'
+        ELSE 'Other (Other)'
+      END AS ServiceSubcategory,
+      u.sku_name AS SkuId,
+      u.usage_type AS SkuMeter,
+      to_json(
+        map_from_entries(
+          filter(
+            transform(
+              map_entries(from_json(to_json(u.product_features), 'map<string, string>')),
+              e -> named_struct('key', concat('x_', e.key), 'value', e.value)
+            ),
+            kv -> kv.value IS NOT NULL
+          )
+        )
+      ) AS SkuPriceDetails,
+      u.sku_name AS SkuPriceId,
+      u.workspace_id AS SubAccountId,
+      u.workspace_name AS SubAccountName,
+      'Workspace' AS SubAccountType,
+      u.custom_tags AS Tags
+    FROM
+      usage_with_pricing u
+    )
+    SELECT * FROM focus
+    ) focus_rows
+    GROUP BY ALL;
+
+// Hide technical fields from the field list, filters and Qlik Answers.
+// Hidden fields still work in expressions, set analysis and variables (vSAM-1, vSAM-2).
+Tag Fields DayRelNo, WeeksAgo, MonthsAgo, YearsAgo,
+           BillingPeriodStart, BillingPeriodEnd, ChargePeriodStart, ChargePeriodEnd,
+           BillingAccountId, SubAccountId, RegionId
+    With $hidden;
+///$tab Period Selector
+/*
+ Island table (not associated to the data model) that lets the user pick a
+ relative period from the "Period" filter pane.
+
+ Usage  : every master measure starts with $(=Only(SelectionSA)), which turns
+          the selected row's SelectionSA into an outer set expression, e.g.
+          $(=Only(SelectionSA)) Sum(BilledCost)
+ Change : Only() is used here so an empty or multiple selection yields no filter (= Full Period)
+          instead of a concatenated, invalid set expression.
+ Dual   : Selection is Dual(text, RecNo()) so the list keeps load order.
+          Full Period has no set expression (no period filter).
+*/
+PeriodSelector:
+Load Dual(Selection, RecNo()) AS Selection, SelectionSA Inline `
+Selection,SelectionSA
+Today,		"{<DayRelNo={0}>}"
+Yesterday,	"{<DayRelNo={1}>}"
+This Week,	"{<WeeksAgo={0}>}"
+Last Week,	"{<WeeksAgo={1}>}"
+This Month, "{<MonthsAgo={0}>}"
+Last Month, "{<MonthsAgo={1}>}"
+This Year,  "{<YearsAgo={0}>}"
+Last Year,  "{<YearsAgo={1}>}"
+Full Period
+`;
+
+Tag Field Selection,SelectionSA with $hidden;
+
+///$tab About
+/*
+ Island table holding the descriptive text shown on the "About" sheet.
+ Kept in the script so the documentation is versioned with the load logic.
+ Not associated to the data model.
+*/
+About:
+Load RecNo() AS AboutOrder, AboutTopic, AboutText Inline `
+AboutTopic|AboutText
+Purpose|FinOps analysis of Databricks spend across every workspace in the account, using billing data mapped to the FinOps Open Cost and Usage Specification (FOCUS).
+Data source|Unity Catalog system tables (system.billing.usage and list prices, plus workspace, cluster, warehouse and pipeline names), mapped to FOCUS 1.3 by the Databricks query and aggregated to one row per day, workspace, service and SKU. History from 2026-01-01.
+Freshness|system.billing.usage is usually updated within a few hours. Periods (Today, This Month...) are relative to the last reload; the "settled" windows exclude the last 3 days.
+Cost measures|List Cost = usage quantity x list unit price. Contracted Cost = usage quantity x account unit price. Billed Cost and Effective Cost = Contracted Cost (no commitment or invoice data in system tables). Without the Account Prices Preview, all four equal list cost.
+How to use|The Period filter drives the Billing Overview sheet (master measures Billed, Effective, List and Contracted Cost). The numbered analysis sheets use fixed windows explained in each sheet description: M-1 and M-2 are the 2nd and 3rd most recent months in the current selection; daily and month-to-date windows are relative to the last reload. Use the other filters to slice by workspace, service, region or SKU.
+Access|Requires SELECT on system.billing.usage, system.billing.list_prices, system.access.workspaces_latest, system.compute.clusters, system.compute.warehouses and system.lakeflow.pipelines, and a SQL warehouse.
+Reference: Databricks FOCUS query|https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus
+Reference: FOCUS specification|https://focus.finops.org/
+` (delimiter is '|');
+
+
+Tag Fields AboutOrder, AboutTopic, AboutText  With $hidden ;
+///$tab Field Comments
+/*
+ Field descriptions shown in the data model viewer and the assets panel.
+ Origin : FOCUS 1.3 column coverage of the Databricks query
+          https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus
+          Fields marked "Derived in Qlik" are calculated in this script.
+*/
+
+// ---- FOCUS columns (Databricks mapping) ----
+COMMENT FIELD BillingPeriodStart WITH 'Inclusive start of the billing period (first day of the calendar month of usage_date).';
+COMMENT FIELD BillingPeriodEnd WITH 'Exclusive end of the billing period (first day of the next month).';
+COMMENT FIELD ChargePeriodStart WITH 'Inclusive start of the charge period. Aggregated in this app to the start of the usage day.';
+COMMENT FIELD ChargePeriodEnd WITH 'Exclusive end of the charge period. Aggregated in this app to the end of the usage day.';
+COMMENT FIELD BillingAccountName WITH 'Databricks account ID (the account name is not available in system tables).';
+COMMENT FIELD BillingAccountId WITH 'Databricks account ID.';
+COMMENT FIELD SubAccountId WITH 'Workspace ID.';
+COMMENT FIELD SubAccountName WITH 'Workspace name, from system.access.workspaces_latest.';
+COMMENT FIELD SubAccountType WITH 'Type of sub-account. Value: Workspace.';
+COMMENT FIELD ChargeCategory WITH 'Highest-level charge classification. Value: Usage.';
+COMMENT FIELD ChargeClass WITH 'Correction indicator. Always null in Databricks system tables.';
+COMMENT FIELD ChargeFrequency WITH 'How often the charge recurs. Value: Usage-Based.';
+COMMENT FIELD ServiceCategory WITH 'FOCUS service category mapped from billing_origin_product (for example, Compute, Analytics, Databases, AI and Machine Learning).';
+COMMENT FIELD ServiceSubcategory WITH 'FOCUS service subcategory mapped from billing_origin_product (for example, Data Warehouses, Data Processing, AI Platforms).';
+COMMENT FIELD ServiceName WITH 'Databricks product that generated the usage (billing_origin_product, for example SQL, JOBS, ALL_PURPOSE, MODEL_SERVING).';
+COMMENT FIELD ChargeDescription WITH 'Databricks SKU name (sku_name), for example PREMIUM_SERVERLESS_SQL_COMPUTE_EAST_US.';
+COMMENT FIELD ResourceType WITH 'Type of resource behind the charge (for example, SQL Warehouse, Job, Cluster, Model Serving Endpoint).';
+COMMENT FIELD SkuMeter WITH 'Databricks usage type (usage_type), for example COMPUTE_TIME, STORAGE_SPACE, TOKEN.';
+COMMENT FIELD ConsumedQuantity WITH 'Usage quantity summed per day (usage_quantity).';
+COMMENT FIELD ConsumedUnit WITH 'Unit of usage_quantity (for example, DBU).';
+COMMENT FIELD PricingQuantity WITH 'Quantity used in cost calculations, summed per day (usage_quantity).';
+COMMENT FIELD PricingUnit WITH 'Unit corresponding to PricingQuantity (for example, DBU). Never divide cost by quantity across different units.';
+COMMENT FIELD ListUnitPrice WITH 'List price per unit from system.billing.list_prices (highest price in the day if it changed).';
+COMMENT FIELD ListCost WITH 'Cost at list price: usage quantity x list unit price.';
+COMMENT FIELD ContractedUnitPrice WITH 'Account-level unit price (highest price in the day if it changed).';
+COMMENT FIELD ContractedCost WITH 'Usage quantity x account unit price.';
+COMMENT FIELD EffectiveCost WITH 'Same as Billed Cost: commitment and savings plan data are not in Databricks system tables.';
+COMMENT FIELD BilledCost WITH 'Usage quantity x account unit price. Not an invoice amount; reconcile with the Databricks account console.';
+COMMENT FIELD BillingCurrency WITH 'Currency of all cost columns. Value: USD.';
+COMMENT FIELD PricingCategory WITH 'Pricing model applied. Value: Standard.';
+COMMENT FIELD RegionId WITH 'Metastore region of the connection (current_metastore()), not the per-workspace region.';
+COMMENT FIELD RegionName WITH 'Metastore region of the connection (current_metastore()), not the per-workspace region.';
+COMMENT FIELD HostProviderName WITH 'Cloud provider hosting the workspace (Amazon Web Services, Microsoft Azure, Google Cloud Platform).';
+COMMENT FIELD InvoiceIssuerName WITH 'Entity issuing the invoice. Value: Databricks.';
+COMMENT FIELD ServiceProviderName WITH 'Entity providing the service. Value: Databricks.';
+
+// ---- Derived in Qlik ----
+COMMENT FIELD ChargeDate WITH 'Derived in Qlik: date part of ChargePeriodStart.';
+COMMENT FIELD ChargeYear WITH 'Derived in Qlik: year of ChargePeriodStart.';
+COMMENT FIELD ChargeMonth WITH 'Derived in Qlik: month of ChargePeriodStart.';
+COMMENT FIELD ChargeYearMonth WITH 'Derived in Qlik: month start of ChargePeriodStart, shown as YYYY-MMM.';
+COMMENT FIELD BillingPeriod WITH 'Derived in Qlik: BillingPeriodStart shown as YYYY-MMM.';
+COMMENT FIELD DayRelNo WITH 'Derived in Qlik: days before the reload date (0 = reload day).';
+COMMENT FIELD WeeksAgo WITH 'Derived in Qlik: weeks before the reload week (0 = current week, Monday start).';
+COMMENT FIELD MonthsAgo WITH 'Derived in Qlik: months before the reload month (0 = current month).';
+COMMENT FIELD YearsAgo WITH 'Derived in Qlik: years before the reload year (0 = current year).';
+COMMENT FIELD Selection WITH 'Period Selector: relative period picked in the Period filter.';
+COMMENT FIELD SelectionSA WITH 'Period Selector: set expression applied by the master measures for the selected period.';
