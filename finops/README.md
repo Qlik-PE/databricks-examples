@@ -1,14 +1,14 @@
 # FinOps: Databricks FOCUS Cost & Usage for Qlik Cloud
 
-A Qlik Cloud Analytics app that monitors Databricks consumption and spend across every workspace in a Databricks account, using billing data mapped to the [FOCUS™](https://focus.finops.org) (FinOps Open Cost & Usage Specification) v1.3 format. It is the Databricks counterpart of the Snowflake FOCUS Cost & Usage app: same sheets, master measures and conventions, so the two can be compared side by side. Paired with Qlik's Discovery Agent, it detects cost anomalies after each reload.
+A Qlik Cloud Analytics app that monitors Databricks consumption and spend across every workspace in a Databricks account, using billing data mapped to the [FOCUS™](https://focus.finops.org/docs/specification/v1-4/) (FinOps Open Cost & Usage Specification) v1.4 format. It is the Databricks counterpart of the Snowflake FOCUS Cost & Usage app: same sheets, master measures and conventions, so the two can be compared side by side. Paired with Qlik's Discovery Agent, it detects cost anomalies after each reload.
 
 ## What is here
 
 | File | What it is |
 |---|---|
-| `databricks-focus-cost-usage.qvf` | The "Databricks FOCUS Cost & Usage (v1.3)" app, exported **without data**: load script, sheets, charts, master items, variables and thumbnails. |
+| `databricks-focus-cost-usage.qvf` | The "Databricks FOCUS Cost & Usage (v1.4)" app, exported **without data**: load script, sheets, charts, master items, variables and thumbnails. |
 | `load-script.qvs` | A copy of the app's load script, for reading and reviewing changes without opening the app. |
-| `focus_query_1_3.sql` | The upstream Databricks FOCUS 1.3 mapping query, unchanged, from [databricks-solutions/cloud-infra-costs](https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus). |
+| `focus_query_1_4.sql` | The upstream Databricks FOCUS 1.4 mapping query, unchanged, from [databricks-solutions/cloud-infra-costs](https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus). |
 | `LICENSE-databricks.md`, `NOTICE-databricks.md` | The Databricks License and notice that cover that query and its modified copy in the load script. |
 
 ## How the data is built
@@ -79,7 +79,7 @@ Outside the Account Prices Preview, the account price comes from `list_prices` t
   GRANT SELECT ON TABLE system.lakeflow.pipelines        TO `<qlik-service-principal>`;
   ```
 
-  plus `CAN USE` on the SQL warehouse. Check access by running `focus_query_1_3.sql` in the SQL editor as that principal.
+  plus `CAN USE` on the SQL warehouse. Check access by running `focus_query_1_4.sql` in the SQL editor as that principal.
 
 ## Installing
 
@@ -143,6 +143,7 @@ Set it up as for the Snowflake app: enable cross-region data processing, assign 
 
 ## Differences from the Snowflake app
 
+- FOCUS version: this app uses FOCUS 1.4; the Snowflake app reads Snowflake's FOCUS 1.3 view. The columns the apps load are the same in both versions (1.4 adds `CommitmentProgramEligibilityDetails` and `InvoiceDetailId`, null in Databricks, and drops the deprecated `ProviderName` and `PublisherName`), so the sheets compare like for like.
 - Grain: aggregated from usage windows to days in the SQL.
 - Units: Databricks prices in DBUs (and a few other units such as storage); the AI & ML sheet shows **AI DBUs** and **AI Services** instead of Snowflake's AI credits and tokens.
 - `BillingAccountName` is the account ID: the account name isn't in system tables.
@@ -159,7 +160,7 @@ Set it up as for the Snowflake app: enable cross-region data processing, assign 
 
 ## License
 
-- `focus_query_1_3.sql`, and the SQL in the app's load script (`load-script.qvs` and inside `databricks-focus-cost-usage.qvf`; a modified copy, with the changes listed in the script header), are Copyright (2025) Databricks, Inc., under the [Databricks License](LICENSE-databricks.md); see also [NOTICE-databricks.md](NOTICE-databricks.md). That license only permits use in connection with the Databricks Services.
+- `focus_query_1_4.sql`, and the SQL in the app's load script (`load-script.qvs` and inside `databricks-focus-cost-usage.qvf`; a modified copy, with the changes listed in the script header), are Copyright (2025) Databricks, Inc., under the [Databricks License](LICENSE-databricks.md); see also [NOTICE-databricks.md](NOTICE-databricks.md). That license only permits use in connection with the Databricks Services.
 - Everything else in this repository is under the Apache 2.0 [LICENSE](../LICENSE).
 
 FOCUS™ is a trademark of the FinOps Foundation.

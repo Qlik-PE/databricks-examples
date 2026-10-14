@@ -1,22 +1,22 @@
 ///$tab Main
 /*
 ================================================================================
- App      : Databricks FOCUS Cost & Usage (v1.3)
+ App      : Databricks FOCUS Cost & Usage (v1.4)
  Purpose  : FinOps analysis of Databricks billing data in FOCUS format
             (FinOps Open Cost and Usage Specification).
- Source   : Unity Catalog system tables, mapped to FOCUS 1.3 by the query
+ Source   : Unity Catalog system tables, mapped to FOCUS 1.4 by the query
             published by Databricks:
             https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus
             Tables: system.billing.usage, system.billing.list_prices,
             system.access.workspaces_latest, system.compute.clusters,
             system.compute.warehouses, system.lakeflow.pipelines
  License  : The SQL in the FOCUS Cost & Usage tab is a MODIFIED copy of
-            focus_query_1_3.sql, Copyright (2025) Databricks, Inc., used under the
+            focus_query_1_4.sql, Copyright (2025) Databricks, Inc., used under the
             Databricks License (finops/LICENSE-databricks.md, NOTICE-databricks.md).
             Changes: wrapped in a SELECT subquery, comments removed,
             :account_prices set to system.billing.list_prices, usage_date filter,
             aggregation to daily grain.
- Spec     : https://focus.finops.org/
+ Spec     : https://focus.finops.org/docs/specification/v1-4/
  Access   : SELECT on the six system tables above (USE CATALOG system,
             USE SCHEMA on billing, access, compute and lakeflow), granted to a
             dedicated service principal used only by the Qlik connection, plus
@@ -62,7 +62,7 @@ LET vToday = Num(Today(1));
  Fact table: one row per day, workspace (sub-account), service, SKU and unit.
 
  Origin of each layer (read bottom to top):
-   1. SQL SELECT   - the Databricks FOCUS 1.3 mapping query (CTEs unchanged, wrapped
+   1. SQL SELECT   - the Databricks FOCUS 1.4 mapping query (CTEs unchanged, wrapped
                      in a subquery because the Qlik ODBC connector only accepts
                      statements that start with SELECT; with
                      :account_prices set to system.billing.list_prices and a
@@ -237,6 +237,7 @@ SQL
       CAST(NULL AS STRING) AS CommitmentDiscountStatus,
       CAST(NULL AS STRING) AS CommitmentDiscountType,
       CAST(NULL AS STRING) AS CommitmentDiscountUnit,
+      CAST(NULL AS STRING) AS CommitmentProgramEligibilityDetails,
       CAST(u.usage_quantity AS DECIMAL(30, 15)) AS ConsumedQuantity,
       u.usage_unit AS ConsumedUnit,
       CAST(NULL AS STRING) AS ContractApplied,
@@ -249,6 +250,7 @@ SQL
         WHEN 'GCP' THEN 'Google Cloud Platform'
         ELSE u.cloud
       END AS HostProviderName,
+      CAST(NULL AS STRING) AS InvoiceDetailId,
       CAST(NULL AS STRING) AS InvoiceId,
       'Databricks' AS InvoiceIssuerName,
       CAST(COALESCE(u.usage_quantity * u.list_unit_price, 0) AS DECIMAL(30, 15)) AS ListCost,
@@ -262,8 +264,6 @@ SQL
       CAST(u.list_unit_price AS DECIMAL(30, 15)) AS PricingCurrencyListUnitPrice,
       CAST(u.usage_quantity AS DECIMAL(30, 15)) AS PricingQuantity,
       u.usage_unit AS PricingUnit,
-      'Databricks' AS ProviderName,
-      'Databricks' AS PublisherName,
       split(current_metastore(), ':')[1] AS RegionId,
       split(current_metastore(), ':')[1] AS RegionName,
       CASE
@@ -591,13 +591,13 @@ About:
 Load RecNo() AS AboutOrder, AboutTopic, AboutText Inline `
 AboutTopic|AboutText
 Purpose|FinOps analysis of Databricks spend across every workspace in the account, using billing data mapped to the FinOps Open Cost and Usage Specification (FOCUS).
-Data source|Unity Catalog system tables (system.billing.usage and list prices, plus workspace, cluster, warehouse and pipeline names), mapped to FOCUS 1.3 by the Databricks query and aggregated to one row per day, workspace, service and SKU. History from 2026-01-01.
+Data source|Unity Catalog system tables (system.billing.usage and list prices, plus workspace, cluster, warehouse and pipeline names), mapped to FOCUS 1.4 by the Databricks query and aggregated to one row per day, workspace, service and SKU. History from 2026-01-01.
 Freshness|system.billing.usage is usually updated within a few hours. Periods (Today, This Month...) are relative to the last reload; the "settled" windows exclude the last 3 days.
 Cost measures|List Cost = usage quantity x list unit price. Contracted Cost = usage quantity x account unit price. Billed Cost and Effective Cost = Contracted Cost (no commitment or invoice data in system tables). Without the Account Prices Preview, all four equal list cost.
 How to use|The Period filter drives the Billing Overview sheet (master measures Billed, Effective, List and Contracted Cost). The numbered analysis sheets use fixed windows explained in each sheet description: M-1 and M-2 are the 2nd and 3rd most recent months in the current selection; daily and month-to-date windows are relative to the last reload. Use the other filters to slice by workspace, service, region or SKU.
 Access|Requires SELECT on system.billing.usage, system.billing.list_prices, system.access.workspaces_latest, system.compute.clusters, system.compute.warehouses and system.lakeflow.pipelines, and a SQL warehouse.
 Reference: Databricks FOCUS query|https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus
-Reference: FOCUS specification|https://focus.finops.org/
+Reference: FOCUS specification|https://focus.finops.org/docs/specification/v1-4/
 ` (delimiter is '|');
 
 
@@ -605,7 +605,7 @@ Tag Fields AboutOrder, AboutTopic, AboutText  With $hidden ;
 ///$tab Field Comments
 /*
  Field descriptions shown in the data model viewer and the assets panel.
- Origin : FOCUS 1.3 column coverage of the Databricks query
+ Origin : FOCUS 1.4 column coverage of the Databricks query
           https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus
           Fields marked "Derived in Qlik" are calculated in this script.
 */

@@ -1,6 +1,6 @@
--- Databricks System Tables to FOCUS 1.3 Mapping Query
+-- Databricks System Tables to FOCUS 1.4 Mapping Query
 -- Compatible with Databricks SQL and Unity Catalog
--- Specification: https://focus.finops.org/focus-specification/v1-3/
+-- Specification: https://focus.finops.org/focus-specification/v1-4/
 
 -- Usage: Replace :account_prices with your account-level prices table path.
 --        If you are not in the Account Prices Preview, use system.billing.list_prices.
@@ -154,53 +154,53 @@ SELECT
   CAST(NULL AS STRING) AS CommitmentDiscountType,
   -- 3.1.28 Commitment Discount Unit (Conditional)
   CAST(NULL AS STRING) AS CommitmentDiscountUnit,
-  -- 3.1.29 Consumed Quantity (Conditional)
+  -- 3.1.29 Commitment Program Eligibility Details (Conditional - NEW in FOCUS 1.4)
+  CAST(NULL AS STRING) AS CommitmentProgramEligibilityDetails,
+  -- 3.1.30 Consumed Quantity (Conditional)
   CAST(u.usage_quantity AS DECIMAL(30, 15)) AS ConsumedQuantity,
-  -- 3.1.30 Consumed Unit (Conditional)
+  -- 3.1.31 Consumed Unit (Conditional)
   u.usage_unit AS ConsumedUnit,
-  -- 3.1.31 Contract Applied (Conditional)
+  -- 3.1.32 Contract Applied (Conditional)
   CAST(NULL AS STRING) AS ContractApplied,
-  -- 3.1.32 Contracted Cost (Mandatory)
+  -- 3.1.33 Contracted Cost (Mandatory)
   CAST(COALESCE(usage_quantity * account_unit_price, 0) AS DECIMAL(30, 15)) AS ContractedCost,
-  -- 3.1.33 Contracted Unit Price (Conditional)
+  -- 3.1.34 Contracted Unit Price (Conditional)
   CAST(u.account_unit_price AS DECIMAL(30, 15)) AS ContractedUnitPrice,
-  -- 3.1.34 Effective Cost (Mandatory)
+  -- 3.1.35 Effective Cost (Mandatory)
   CAST(COALESCE(usage_quantity * account_unit_price, 0) AS DECIMAL(30, 15)) AS EffectiveCost,
-  -- 3.1.35 Host Provider Name (Mandatory - NEW in FOCUS 1.3)
+  -- 3.1.36 Host Provider Name (Mandatory)
   CASE u.cloud
     WHEN 'AWS' THEN 'Amazon Web Services'
     WHEN 'AZURE' THEN 'Microsoft Azure'
     WHEN 'GCP' THEN 'Google Cloud Platform'
     ELSE u.cloud
   END AS HostProviderName,
-  -- 3.1.36 Invoice ID (Recommended)
+  -- 3.1.37 Invoice Detail ID (Conditional - NEW in FOCUS 1.4)
+  CAST(NULL AS STRING) AS InvoiceDetailId,
+  -- 3.1.38 Invoice ID (Conditional)
   CAST(NULL AS STRING) AS InvoiceId,
-  -- 3.1.37 Invoice Issuer Name (Mandatory)
+  -- 3.1.39 Invoice Issuer Name (Mandatory)
   'Databricks' AS InvoiceIssuerName,
-  -- 3.1.38 List Cost (Mandatory)
+  -- 3.1.40 List Cost (Mandatory)
   CAST(COALESCE(u.usage_quantity * u.list_unit_price, 0) AS DECIMAL(30, 15)) AS ListCost,
-  -- 3.1.39 List Unit Price (Conditional)
+  -- 3.1.41 List Unit Price (Conditional)
   CAST(u.list_unit_price AS DECIMAL(30, 15)) AS ListUnitPrice,
-  -- 3.1.40 Pricing Category (Conditional)
+  -- 3.1.42 Pricing Category (Conditional)
   'Standard' AS PricingCategory,
-  -- 3.1.41 Pricing Currency (Conditional)
+  -- 3.1.43 Pricing Currency (Conditional)
   u.currency_code AS PricingCurrency,
-  -- 3.1.42 Pricing Currency Contracted Unit Price (Conditional)
+  -- 3.1.44 Pricing Currency Contracted Unit Price (Conditional)
   CAST(u.account_unit_price AS DECIMAL(30, 15)) AS PricingCurrencyContractedUnitPrice,
-  -- 3.1.43 Pricing Currency Effective Cost (Conditional)
+  -- 3.1.45 Pricing Currency Effective Cost (Conditional)
   CAST(
     COALESCE(usage_quantity * account_unit_price, 0) AS DECIMAL(30, 15)
   ) AS PricingCurrencyEffectiveCost,
-  -- 3.1.44 Pricing Currency List Unit Price (Conditional)
+  -- 3.1.46 Pricing Currency List Unit Price (Conditional)
   CAST(u.list_unit_price AS DECIMAL(30, 15)) AS PricingCurrencyListUnitPrice,
-  -- 3.1.45 Pricing Quantity (Mandatory)
+  -- 3.1.47 Pricing Quantity (Mandatory)
   CAST(u.usage_quantity AS DECIMAL(30, 15)) AS PricingQuantity,
-  -- 3.1.46 Pricing Unit (Mandatory)
+  -- 3.1.48 Pricing Unit (Mandatory)
   u.usage_unit AS PricingUnit,
-  -- 3.1.47 Provider Name (DEPRECATED in FOCUS 1.3 — kept for backward compatibility)
-  'Databricks' AS ProviderName,
-  -- 3.1.48 Publisher Name (DEPRECATED in FOCUS 1.3 — kept for backward compatibility)
-  'Databricks' AS PublisherName,
   -- 3.1.49 Region ID (Conditional)
   split(current_metastore(), ':')[1] AS RegionId,
   -- 3.1.50 Region Name (Conditional)
@@ -433,7 +433,7 @@ SELECT
   END AS ServiceCategory,
   -- 3.1.55 Service Name (Mandatory)
   u.billing_origin_product AS ServiceName,
-  -- 3.1.56 Service Provider Name (Mandatory - NEW in FOCUS 1.3)
+  -- 3.1.56 Service Provider Name (Mandatory)
   'Databricks' AS ServiceProviderName,
   -- 3.1.57 Service Subcategory (Recommended)
   CASE
