@@ -6,7 +6,8 @@ A Qlik Cloud Analytics app that monitors Databricks consumption and spend across
 
 | File | What it is |
 |---|---|
-| `load-script.qvs` | The app's load script (Data load editor), ready to paste into an app. |
+| `databricks-focus-cost-usage.qvf` | The "Databricks FOCUS Cost & Usage (v1.3)" app, exported **without data**: load script, sheets, charts, master items, variables and thumbnails. |
+| `load-script.qvs` | A copy of the app's load script, for reading and reviewing changes without opening the app. |
 | `focus_query_1_3.sql` | The upstream Databricks FOCUS 1.3 mapping query, unchanged, from [databricks-solutions/cloud-infra-costs](https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus). |
 | `LICENSE-databricks.md`, `NOTICE-databricks.md` | The Databricks License and notice that cover that query and its modified copy in the load script. |
 
@@ -82,9 +83,12 @@ Outside the Account Prices Preview, the account price comes from `list_prices` t
 
 ## Installing
 
-### 1. Create the app
+### 1. Upload the app
 
-Create a new app in Qlik Cloud (or copy the Snowflake FOCUS app, if you have it, to reuse its sheets). The sheets and master items described above live in the app; this folder holds the load script.
+1. In Qlik Cloud, go to **Create → Upload app** and choose `databricks-focus-cost-usage.qvf`. It contains the load script, sheets, master items, variables and thumbnails, but no data.
+2. Pick a shared space (for example `Databricks`) where you can create data connections. The connection must be in the same space, or in a space the app can read.
+
+Don't reload yet: the connection the script refers to doesn't exist in your tenant.
 
 ### 2. Create the Databricks connection
 
@@ -103,10 +107,17 @@ Create a new app in Qlik Cloud (or copy the Snowflake FOCUS app, if you have it,
 
 Avoid a personal user or token: a service principal with only the grants above keeps billing access narrow.
 
-### 3. Paste and update the load script
+### 3. Update the load script
 
-1. Replace the app's script with `load-script.qvs`.
-2. On the **Main** tab, change the `LIB CONNECT TO` line to your connection: `'<SpaceName>:<ConnectionName>'`, or just the name for a personal-space connection. The connection's **Connect** (plug) icon in the Data connections panel inserts the exact string.
+The script is already in the app; only the connection line needs changing.
+
+1. In **Data load editor**, open the **Main** tab and find:
+
+   ```qlik
+   LIB CONNECT TO 'Databricks:Databricks_PE_DEMO__Warehouse';
+   ```
+
+2. Change it to `'<SpaceName>:<ConnectionName>'` for your connection, or just the name for a personal-space connection. The connection's **Connect** (plug) icon in the Data connections panel inserts the exact string.
 3. Optional changes on the **FOCUS Cost & Usage** tab:
    - In the Account Prices Preview (AWS/GCP), change the table in the `account_prices` CTE to `system.billing.account_prices`.
    - Change `usage_date >= DATE'2026-01-01'` to load more or less history.
