@@ -7,9 +7,7 @@ A Qlik Cloud Analytics app that monitors Databricks consumption and spend across
 | File | What it is |
 |---|---|
 | `databricks-focus-cost-usage.qvf` | The "Databricks FOCUS Cost & Usage (v1.4)" app, exported **without data**: load script, sheets, charts, master items, variables and thumbnails. |
-| `load-script.qvs` | A copy of the app's load script, for reading and reviewing changes without opening the app. |
-| `focus_query_1_4.sql` | The upstream Databricks FOCUS 1.4 mapping query, unchanged, from [databricks-solutions/cloud-infra-costs](https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus). |
-| `LICENSE-databricks.md`, `NOTICE-databricks.md` | The Databricks License and notice that cover that query and its modified copy in the load script. |
+| `LICENSE-databricks.md`, `NOTICE-databricks.md` | The Databricks License and notice that cover the modified copy of the Databricks FOCUS query in the app's load script. |
 
 ## How the data is built
 
@@ -47,6 +45,41 @@ The load script runs that query with three changes:
 
 M-1 and M-2 are the 2nd and 3rd most recent months in the current selection (variables `vSAM-1`/`vSAM-2`). With nothing selected, they are the last complete month and the month before. Rates are always calculated per pricing unit, so different units are never mixed.
 
+<details>
+<summary>Sheet screenshots</summary>
+
+**About**
+
+![About sheet](images/sheet-about.png)
+
+**Billing Overview**
+
+![Billing Overview sheet](images/sheet-billing-overview.png)
+
+**1. Daily Anomalies**
+
+![1. Daily Anomalies sheet](images/sheet-daily-anomalies.png)
+
+**2. Month-over-Month Services**
+
+![2. Month-over-Month Services sheet](images/sheet-month-over-month.png)
+
+**3. Month-End Forecast**
+
+![3. Month-End Forecast sheet](images/sheet-month-end-forecast.png)
+
+**4. Price vs Volume**
+
+![4. Price vs Volume sheet](images/sheet-price-vs-volume.png)
+
+**5. AI & ML Spend**
+
+![5. AI & ML Spend sheet](images/sheet-ai-ml-spend.png)
+
+Values are blurred.
+
+</details>
+
 ### Cost measures
 
 | Measure | Meaning in this mapping |
@@ -79,7 +112,7 @@ Outside the Account Prices Preview, the account price comes from `list_prices` t
   GRANT SELECT ON TABLE system.lakeflow.pipelines        TO `<qlik-service-principal>`;
   ```
 
-  plus `CAN USE` on the SQL warehouse. Check access by running `focus_query_1_4.sql` in the SQL editor as that principal.
+  plus `CAN USE` on the SQL warehouse. Check access by running the [Databricks FOCUS 1.4 query](https://github.com/databricks-solutions/cloud-infra-costs/tree/main/focus) in the SQL editor as that principal.
 
 ## Installing
 
@@ -139,17 +172,7 @@ If the reload fails:
 
 ### Optional: Discovery Agent
 
-Set it up as for the Snowflake app: enable cross-region data processing, assign the Discovery Agent role, enable it on the app, and create a trigger group on Billed Cost (USD) with time dimension `BillingPeriod`, broken down by `SubAccountName`, `ServiceName` and `ChargeDescription`.
-
-## Differences from the Snowflake app
-
-- FOCUS version: this app uses FOCUS 1.4; the Snowflake app reads Snowflake's FOCUS 1.3 view. The columns the apps load are the same in both versions (1.4 adds `CommitmentProgramEligibilityDetails` and `InvoiceDetailId`, null in Databricks, and drops the deprecated `ProviderName` and `PublisherName`), so the sheets compare like for like.
-- Grain: aggregated from usage windows to days in the SQL.
-- Units: Databricks prices in DBUs (and a few other units such as storage); the AI & ML sheet shows **AI DBUs** and **AI Services** instead of Snowflake's AI credits and tokens.
-- `BillingAccountName` is the account ID: the account name isn't in system tables.
-- `RegionId`/`RegionName` come from `current_metastore()`, the metastore region of the connection, not each workspace's region.
-- No invoice, correction, capacity reservation or commitment columns: `ChargeClass`, `InvoiceId` and `ContractApplied` are null.
-- The 3-day "settled" lag is kept for consistency. Databricks usage usually lands within hours, so it is conservative.
+In the Qlik Cloud Administration console, enable cross-region data processing and assign the Discovery Agent role to the users who should receive insights. Then enable Discovery Agent on the app and create a trigger group on Billed Cost (USD) with time dimension `BillingPeriod`, broken down by `SubAccountName`, `ServiceName` and `ChargeDescription`.
 
 ## Resources
 
@@ -160,7 +183,7 @@ Set it up as for the Snowflake app: enable cross-region data processing, assign 
 
 ## License
 
-- `focus_query_1_4.sql`, and the SQL in the app's load script (`load-script.qvs` and inside `databricks-focus-cost-usage.qvf`; a modified copy, with the changes listed in the script header), are Copyright (2025) Databricks, Inc., under the [Databricks License](LICENSE-databricks.md); see also [NOTICE-databricks.md](NOTICE-databricks.md). That license only permits use in connection with the Databricks Services.
+- The SQL in the app's load script (inside `databricks-focus-cost-usage.qvf`), a modified copy of the Databricks FOCUS 1.4 query with the changes listed in the script header, is Copyright (2025) Databricks, Inc., under the [Databricks License](LICENSE-databricks.md); see also [NOTICE-databricks.md](NOTICE-databricks.md). That license only permits use in connection with the Databricks Services.
 - Everything else in this repository is under the Apache 2.0 [LICENSE](../LICENSE).
 
 FOCUS™ is a trademark of the FinOps Foundation.
