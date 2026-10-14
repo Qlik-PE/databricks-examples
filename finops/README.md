@@ -159,7 +159,7 @@ Set it up as for the Snowflake app: enable cross-region data processing, assign 
 
 ## License
 
-- `focus_query_1_3.sql` and the SQL inside `load-script.qvs` (a modified copy, with the changes listed in the script header) are Copyright (2025) Databricks, Inc., under the [Databricks License](LICENSE-databricks.md); see also [NOTICE-databricks.md](NOTICE-databricks.md). That license only permits use in connection with the Databricks Services.
+- `focus_query_1_3.sql`, and the SQL in the app's load script (`load-script.qvs` and inside `databricks-focus-cost-usage.qvf`; a modified copy, with the changes listed in the script header), are Copyright (2025) Databricks, Inc., under the [Databricks License](LICENSE-databricks.md); see also [NOTICE-databricks.md](NOTICE-databricks.md). That license only permits use in connection with the Databricks Services.
 - Everything else in this repository is under the Apache 2.0 [LICENSE](../LICENSE).
 
 FOCUS™ is a trademark of the FinOps Foundation.
