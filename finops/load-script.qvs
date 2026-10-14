@@ -45,7 +45,7 @@ SET FirstMonthOfYear=1;    // Calendar year
 // Databricks data connection, as '<SpaceName>:<ConnectionName>' (just the name for a personal-space connection).
 // Change this line to match the connection you created (see finops/README.md).
 // Tip: in the Data connections panel, click the connection's Connect icon to insert the exact string.
-LIB CONNECT TO 'Databricks_adb-1918470936722426.6.azuredatabricks.net';
+LIB CONNECT TO 'Databricks:Databricks_PE_DEMO__Warehouse';
 
 ///$tab Calendar Logic
 /*
